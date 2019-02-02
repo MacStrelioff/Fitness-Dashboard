@@ -1,0 +1,363 @@
+---
+documentclass: book
+output:
+  pdf_document: null
+  html_document:  # html for interactive plots with plotly :)
+    df_print: paged
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE,eval=TRUE,cache=FALSE}
+# For getting files to compile;
+# setwd("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Published/Dissertation/Paper/")
+# knitr::knit("Dissertation.Rmd")
+# setwd("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Published/Dissertation/Paper")
+# rmarkdown::pandoc_convert("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Published/Dissertation/Paper/Dissertation.md", 
+# to = "latex", 
+# output = "/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Published/Dissertation/Paper/Dissertation.tex")
+
+## RMD options
+knitr::opts_chunk$set(include = TRUE,
+                      echo    = FALSE,
+                      eval    = TRUE,
+                      cache   = FALSE,
+                      fig.height = 3.5,
+                      fig.width = 5,
+                      comment = '')
+#knitr::knit_hooks$set(webgl = hook_webgl)
+
+## load required packages
+# library(aod) # for analysis
+# library(arm)   # convenience functions for regression in R
+library(bayesplot)
+library(binaryLogic)    # for binary operations needed to convert Garmin Unix dates
+library(bridgesampling) # for BFs
+library(fit)     # for importing .fit files with read.fit(path)
+library(ggplot2) # for figures
+library(GGally)  # for ggpairs()
+library(hexbin) # for joint densities in mcmc_pairs
+# library(knitr)
+library(lme4)  # random effects models
+library(plotly) # for 3d plotting
+library(RColorBrewer) # for color palettes for plotting later
+#library(rgl) # for 3d interactive plotting?
+library(rstan) # 
+library(rstanarm) # for STAN helper functions
+library(rstansim) # for simulating from STAN models
+# library(tidyverse) # for general data wrangling
+library(magick) # needs to be later for suppressing code chunk results
+
+# set cores for speeding up STAN models;
+options(mc.cores = parallel::detectCores())
+
+## set seed
+set.seed(10201991)
+```
+
+
+
+# Garmin 
+test
+
+Data Description
+
+
+
+# Heart Rate
+
+## Trends
+
+
+## Patterns
+
+
+## Timeseries Analysis
+
+First challenge was importing a .fit file
+
+
+Next challenge was working with the timestamps. 
+
+
+Accessing the .FIT files exported from the Garmin website
+
+```{r}
+setwd("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Project Fitness/Data/")
+
+# for each date in the data folder
+dat=c()
+dates = dir()
+for(di in dates){
+print(di)
+# go to date folder
+setwd(paste("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Project Fitness/Data/",di,sep=""))
+# files = dir(paste("./",di,sep="")) # get .fit files
+files = dir() # get .fit files in this folder
+# for each file in the date directory
+for (fi in files){
+fi
+tmpdat=read.fit(fi)$monitoring
+cond=read.fit(fi)$monitoring$heart_rate
+if(!is.null(cond)){
+# fill in NAs for missing columns
+dat[   setdiff(names(tmpdat), names(dat))]<- NA
+tmpdat[setdiff(names(dat), names(tmpdat))]<- NA
+# concatinate 
+dat=rbind(dat,tmpdat)
+print(dim(dat))
+}}}
+dat=dat[-1,]; # remove first row that is all NAs
+# get heart rate indecies
+idxhr= !is.na(dat$heart_rate)
+
+# garmin timestamp and timestamp_16 are mutually exclusive;
+all(is.na(dat$timestamp)==!is.na(dat$timestamp_16))
+# ^ values that are NA in one are not NA in the other
+
+# garmin time is seconds since Dec 31, 1989, 
+# to convert to standard unix time since 1970 epoch, add 631065600
+# or just set origin accordingly;
+#dat$timestamp=as.POSIXct(dat$timestamp,tz="UTC",origin="1989-12-31")
+# works for the timestamps
+
+# note a pattern here;
+# dat$timestamp_16[idxhr]%%(64)
+
+# note sure about the timestamp_16s?
+
+# seconds in a day; (60*60*24)
+
+# from; https://www.thisisant.com/forum/viewthread/6374
+# for timestamp_16; 
+# Hi Philippe,
+# 
+#It looks like we do not explain the usage of timestamp_16 in our documentation. We will look into adding an explanation for this in the future.
+#
+# timestamp_16 is a 16 bit version of the timestamp field (which is 32 bit) that represents the lower 16 bits of the timestamp. This field is meant to  be used in combination with an earlier timestamp field that is used as a reference for the upper 16 bits.
+#
+# The proper way to deal with this field is shown in MonitoringReader.java in the SDK and summarized as follows:
+#
+#  mesgTimestamp += ( timestamp_16 - ( mesgTimestamp & 0xFFFF ) ) & 0xFFFF; 
+#
+# Where the mesgTimestamp is the previous 32 bit timestamp (the "timestamp" field). This essentially swaps the lower 16 bits of the timestamp field with the timestamp_16 field, and deals with any rollovers that may occur.
+
+# converts ints to bits
+# last timestamp + 
+# intToBits(dat$timestamp) + 
+# intToBits(dat$timestamp_16[idxhr][1])
+
+# maybe try replacing the last 16 bits of the timestamp with those from the timestamp_16?
+
+# so something like 
+# library(binaryLogic)
+# as.binary(dat$timestamp[!is.na(dat$timestamp)])
+# porting the advice to R:
+# mesgTimestamp = last non NA as.binary(dat$timestamp[!is.na(dat$timestamp)])
+# +=
+# as.binary(dat$timestamp_16[idxhr])
+# - ( as.binary(dat$timestamp[!is.na(dat$timestamp)])[[lastNonNA]]&as.binary(0xFFFF))
+
+# e.g. 
+#  mesgTimestamp += ( timestamp_16 - ( mesgTimestamp & 0xFFFF ) ) & 0xFFFF; 
+#mesgTimestamp1 = as.binary(dat$timestamp[27])
+#t16 = as.binary(dat$timestamp_16[28:60])
+#mesgTimestamp2=c()
+#for(ti in 1:length(t16)){
+#mesgTimestamp2 = c(mesgTimestamp2,as.numeric(mesgTimestamp1)+as.numeric((t16[[ti]]-(mesgTimestamp1&as.binary(0xFFFF)))&as.binary(0xFFFF)))
+#}
+## reset origin since this was done with original timestamp call
+#as.POSIXct(c(as.numeric(mesgTimestamp1),as.numeric(mesgTimestamp2)),origin="1989-12-31")
+# lapply way;
+#tmpf = function(t32,t16){as.numeric(t32)+as.numeric((t16-(t32&as.binary(0xFFFF)))&as.binary(0xFFFF))}
+#sapply(t16,FUN=function(x){tmpf(mesgTimestamp1,x)})
+#as.POSIXct(sapply(t16,FUN=function(x){tmpf(mesgTimestamp1,x)}),origin="1989-12-31")
+
+# convert timestamps to a single datetime feature
+tmpf = function(t32,t16){
+t32 = as.binary(t32)
+t16 = as.binary(t16)
+tmpr=as.numeric(t32)+as.numeric((t16-(t32&as.binary(0xFFFF)))&as.binary(0xFFFF))
+return(tmpr)
+}
+ts = rep(NA,length(dat$timestamp_16)); # initialize vector for sensible timestamps
+tmpnotna = which(!is.na(dat$timestamp))
+ts[tmpnotna]=dat$timestamp[tmpnotna]
+tmpcompute=diff(is.na(ts)) # a way to index values to compute
+tmpstart = which(tmpcompute== 1)#  1: 32bit followed by 16bit
+tmpend   = which(tmpcompute==-1)# -1: 16bit followed by 32bit
+tmplen   = tmpend-tmpstart;     # number of entries to compute
+# for each 32bit followed by a 16bit, 
+for(ci in tmpstart){
+tmpidx = which(tmpstart==ci); # convert to indecies of the tmp vars here
+t32 = dat$timestamp[ci]; # 32bit value to base subsequen 16bit values on 
+t16idx = (ci+1):(ci+tmplen[tmpidx])
+t16 = dat$timestamp_16[t16idx]
+ts[t16idx]=sapply(t16,FUN=function(x){tmpf(t32,x)})
+print(paste("Finished: ",as.POSIXct(t32,origin="1989-12-31"),sep=""))
+}
+ts = as.POSIXct(ts,origin="1989-12-31");
+dat$ts=ts; # append full timestamps to the original dataset
+# can use apply since t16 comes out as a list.. 
+
+# note, I finished running at 11:36, and texted Emily a pic of the machine and my HR, which was around 188.
+
+# plot
+plot(dat$ts[idxhr],dat$heart_rate[idxhr],type='l',pch=20,
+     xlab="Time",
+     ylab="Heart Rate (bpm)")
+#points(dat$ts[idxhr],dat$heart_rate[idxhr],pch=20)
+# which(ts=="2018-12-13 11:36:00 PST") # 60
+abline(v=ts[60],col='red',lty=2) # when my run ended this morning
+```
+
+
+## Accessing the .FIT files imported to my computer from the watch. 
+
+Investigating each .FIT file imported from the Garmin Watch
+```{r}
+# go to Garmin import folder
+setwd("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Project Fitness/Garmin Sync/")
+# get import dates
+dates = dir()
+# go to date folder
+GarminSyncDate = paste("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Project Fitness/Garmin Sync/",dates[1],sep="")
+setwd(GarminSyncDate)
+# get sub-folders
+subfolders=dir()
+subfolders
+```
+
+```{r}
+# determine sub-folder to search through
+sf = subfolders[27]
+# go to a sub-folder
+setwd(paste(GarminSyncDate,"/",sf,sep=""))
+# get the .FIT files
+files = dir() # get .fit files in this folder
+idxfit = which(endsWith(files,".FIT")); # indecies of .FIT files in directory
+# read them and print contents to screen
+files[idxfit]
+for(fi in idxfit){
+print(paste("File: ",fi,sep=""))
+print(read.fit(files[fi]))
+}
+
+# Notes:
+# ACTIVITY:
+# file1$record includes; cadence, distance, heart rate, speed, timestamp
+# file2$record includes; altitude, cadence, distance, heart rate, position_lat, position_long, speed, timestamp
+
+# MONITOR (subfolders[13])
+# file1$monitoring includes; 
+# "active_calories"                 "active_time"                     "activity_type"                   "current_activity_type_intensity"
+# "cycles"                          "distance"                        "duration_min"                    "heart_rate"                     
+# "intensity"                       "timestamp"                       "timestamp_16"      
+# file2 has a monitoring field, but didn't have any information
+
+# folders with .FIT files with no biological, mechanical, or positional data
+# LOCATION, METRICS. RECORDS, SCHEDULE, SETTINGS, SLEEP, SPORTS, WORKOUTS
+
+sf
+files[idxfit]
+
+```
+
+
+```{r}
+setwd("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Project Fitness/Garmin Sync/")
+# for each date in the data folder
+datGarmin=c()
+dates = dir()
+for(di in dates){
+print(di)
+# go to date folder
+setwd(paste("/Volumes/GoogleDrive/My Drive/CurrentDrive/LabWork/Project Fitness/Garmin Sync/",di,sep=""))
+# go to a sub-folder
+setwd("./RECORDS")
+# go to another sub-folder
+setwd("../RECORDS") # .FIT doesn't have anything interesting
+# files = dir(paste("./",di,sep="")) # get .fit files
+files = dir() # get .fit files in this folder
+# for each file in the date directory
+for (fi in files){
+fi
+tmpdat=read.fit(fi)$monitoring
+cond=read.fit(fi)$monitoring$heart_rate
+if(!is.null(cond)){
+# fill in NAs for missing columns
+dat[   setdiff(names(tmpdat), names(dat))]<- NA
+tmpdat[setdiff(names(dat), names(tmpdat))]<- NA
+# concatinate 
+dat=rbind(dat,tmpdat)
+print(dim(dat))
+}}}
+dat=dat[-1,]; # remove first row that is all NAs
+# get heart rate indecies
+idxhr= !is.na(dat$heart_rate)
+
+
+```
+
+
+# Sleep
+
+
+## Trends
+
+
+## Patterns
+
+
+## Single Day Analysis
+
+
+
+# Fittness Log
+
+## Dec 13, 2018
+
+### First Run
+The log starts at my second run since deciding to run regularly. I ran about 2 miles once before getting the garmin watch.
+
+```{r}
+# ts>start time
+# ts<end time
+
+# plot hr during run
+
+
+```
+
+
+
+## 2018-12-14
+
+Had a redbull around 1:13pm. 
+
+Pub tonight around 5:30pm!
+
+## 2018-12-22
+
+had a coffee Soylent around 9am. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
